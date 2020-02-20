@@ -71,6 +71,7 @@ dat %>% select(time, velocity, peak.frequency, sample.rate, d.time) %>%
     x.min = c(0, 0, 0.0), x.max = c(13, 1, 0.1),
   )
 
+# Integral by lm fit, nls fit and dividing by 2*pi*f (100 Hz)
 dat %>% select(time, velocity, peak.frequency, sample.rate, d.time) %>%
   mutate(
     sin.term = sin(2*pi*peak.frequency[1]*time),
@@ -115,36 +116,33 @@ dat %>% select(time, velocity, peak.frequency, sample.rate, d.time) %>%
   slice(10000:11000) %>%
   ggplot(aes(x = time, y = displacement)) +
     geom_line() +
-    geom_line(aes(y = nls.int), size=1, color="red")
+    geom_line(aes(y = nls.int), size=1, color="red") +
+  scale_color_manual(values = c("2*pi*f (100 Hz)", "Fit")) +
+  ggtitle("2*pi*f (100 Hz) - Fit") +
+  labs(y = "Pomak [um]", x = "Vrijeme [s]")
     # geom_line(aes(y = lm.int), size=1, color="green") 
   ggplot(aes(x = time, y = velocity)) +
     geom_point() +
     geom_line(aes(y= velocity.pred.nls), size=1, color="red") +
     geom_line(aes(y= velocity.pred.lm), size=1, color="green") 
          
-  mutate(
-    peak.frequency = peak.frequency[1],
-    ma.smooth = ma(velocity, 2),
-    diff = c(0, diff(ma.smooth)),
-    ) %>% drop_na(ma.smooth, diff) %>%
-  filter(row_number() > min(row_number()[velocity >= 0 & diff > 0]+13)) %>%
-  mutate(
-    time = (row_number()-1)*d.time[1],
-    sin.term = sin(2*pi*peak.frequency[1]*time + pi/2),
-    ) %>%
-  # time.series.plot(
-  #   x.name = "time", y.name = "ma.smooth",
-  #   x.min = c(0, 0, 0.0), x.max = c(13, 1, 0.1),
-  # )
-  nest(data = everything()) %>%
-  mutate(
-    fit = map(data, ~ lm(.$velocity ~ .$sin.term)),
-    tidied = map(fit, glance),
+# Integral in frequency domain - bad result
+test <- tibble(
+  sample.freq = dat$sample.rate[1],
+  k = seq(0, length(dat$velocity)),
+  fft.pad = fft(c(dat$velocity, rep(0, length(dat$velocity))))[1:(length(dat$velocity)+1)],
+  int.op = 1/(2i*pi*k*sample.freq/2/length(dat$velocity))
   ) %>%
-  pull(fit) %$% summary(.[[1]])
-  time.series.plot(
-    x.name = "time", y.name = "ma.smooth",
-    x.min = c(0, 0, 0.0), x.max = c(13, 1, 0.1),
-  )
-  
-  
+  mutate(
+    int.op = c(0, int.op[2:length(int.op)]),
+    int.freq = fft.pad * int.op,
+    int.freq.neg = rev(Conj(int.freq))
+  ) %$%
+  tibble(
+    int.freq.dbl = c(.$int.freq, .$int.freq.neg[2:(length(.$int.freq.neg)-1)]),
+    int.time = fft(int.freq.dbl, inverse = T)/length(int.freq.dbl)
+  ) %$%
+  tibble(
+    int.time = detrend(Re(.$int.time[1:(length(.$int.time)/2)])),
+    time = dat$time)
+test %>% ggplot(aes(x = time, y = int.time)) + geom_line()
